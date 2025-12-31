@@ -1,0 +1,3 @@
+# Drosera contracts should be cloned manually
+lib/drosera-contracts
+lib/*
