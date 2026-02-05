@@ -5,17 +5,17 @@ This guide walks you **step by step** through how to:
 * Set up your environment (even if you’ve never done this before)
 * Understand how Drosera traps actually work (no wrong mental models)
 * Build a **Drosera-correct PoC trap**
-* Avoid every common mistake reviewers flag
-* Deploy, test, and wire your trap properly
+* Avoid the most common reviewer-killing mistakes
+* Deploy, test, and wire your trap correctly
 * Push everything cleanly to GitHub
 
-If you follow this guide **top to bottom**, your trap will run under Drosera operators.
+If you follow this guide **top to bottom**, your trap will run correctly under Drosera operators.
 
 ---
 
-## What a Drosera Trap Is (Important First Read)
+## What a Drosera Trap Is (Read This First)
 
-A **Drosera trap is NOT something you “trigger” manually**.
+A **Drosera trap is NOT something you trigger manually**.
 
 You do NOT:
 
@@ -23,15 +23,15 @@ You do NOT:
 * click a button to activate it
 * call a responder from inside the trap
 
-Instead:
+Instead, the execution model is:
 
-1. **Drosera operators** deploy your trap on a shadow fork.
-2. Operators call `collect()` **on-chain** every block.
-3. Operators pass the outputs into `shouldRespond()` **off-chain**.
+1. **Drosera operators** deploy your trap on a shadow fork
+2. Operators call `collect()` **on-chain** every block
+3. Operators pass the collected outputs into `shouldRespond()` **off-chain**
 4. If `shouldRespond()` returns `(true, payload)`,
-   Drosera calls your **responder contract** (configured in TOML).
+   Drosera calls your **responder contract** (configured in TOML)
 
-Your trap must fit this model exactly.
+Your trap **must fit this model exactly**.
 
 ---
 
@@ -39,7 +39,7 @@ Your trap must fit this model exactly.
 
 Your trap **must**:
 
-* Implement **Drosera’s ITrap interface**
+* Implement Drosera’s `ITrap` interface exactly
 * Be **stateless**
 * Be **deterministic**
 * Never rely on `msg.sender`
@@ -47,13 +47,47 @@ Your trap **must**:
 * Never call the responder directly
 * Never revert in `collect()`
 
-If you break any of these, the trap will not run.
+Breaking **any one** of these rules will cause your trap to be rejected or fail at runtime.
+
+---
+
+## ABI Rule (CRITICAL – READ CAREFULLY)
+
+⚠️ **The `bytes` returned by `shouldRespond()` MUST be produced using `abi.encode(...)`
+and MUST match the responder function signature defined in `drosera.toml`.**
+
+Do NOT:
+
+* return `bytes("...")`
+* manually pack values
+* return arbitrary payloads
+
+Always do this:
+
+```solidity
+abi.encode(arg1, arg2, ...)
+```
+
+Example:
+If your responder function is:
+
+```
+respond(int256,uint256)
+```
+
+Then your trap **must** return:
+
+```solidity
+abi.encode(int256Value, uint256Value)
+```
+
+This is the single most common beginner mistake.
 
 ---
 
 ## Required Interface (Must Match Exactly)
 
-Every Drosera trap must implement:
+Every Drosera trap must implement this interface **exactly**:
 
 ```solidity
 interface ITrap {
@@ -74,51 +108,39 @@ No different return types.
 
 ### Operating System
 
-* Ubuntu 22.04+
-  (native or WSL on Windows)
+* Ubuntu 22.04+ (native or WSL)
 
-### Tools You Need
+### Tools
 
 * Git
 * VS Code
 * Foundry
-* A GitHub account
-* Basic terminal access
+* GitHub account
+* Basic terminal familiarity
 
 ---
 
 ## 2. Install System Tools
 
-### Install Git
+### Git
 
 ```bash
 sudo apt update
 sudo apt install git -y
-```
-
-Verify:
-
-```bash
 git --version
 ```
 
----
-
-### Install VS Code
+### VS Code
 
 ```bash
 sudo snap install code --classic
 ```
 
-Inside VS Code, install:
-
-* **Solidity** extension (Juan Blanco)
+Install the **Solidity (Juan Blanco)** extension.
 
 ---
 
 ## 3. Install Foundry
-
-Foundry is the Solidity toolchain used by Drosera.
 
 ```bash
 curl -L https://foundry.paradigm.xyz | bash
@@ -134,7 +156,7 @@ cast --version
 
 ---
 
-## 4. Create Your Trap Project
+## 4. Create the Trap Project
 
 ```bash
 mkdir drosera-poc-trap
@@ -142,7 +164,7 @@ cd drosera-poc-trap
 forge init
 ```
 
-You should now have:
+Expected structure:
 
 ```
 src/
@@ -154,8 +176,6 @@ foundry.toml
 ---
 
 ## 5. Install Drosera Contracts
-
-You **must** use Drosera’s official interfaces.
 
 ```bash
 git clone https://github.com/drosera-network/contracts.git lib/drosera-contracts
@@ -169,7 +189,7 @@ ls lib/drosera-contracts/src/interfaces/ITrap.sol
 
 ---
 
-## 6. Configure Foundry Remappings
+## 6. Configure Foundry Remappings (Correct Form)
 
 Edit `foundry.toml`:
 
@@ -179,12 +199,16 @@ src = "src"
 out = "out"
 libs = ["lib"]
 
-[profile.default.remappings]
-drosera-contracts = "lib/drosera-contracts/src/"
+remappings = [
+  "drosera-contracts/=lib/drosera-contracts/src/"
+]
 ```
 
-⚠️ Very common mistake
-Do **not** use `/=` here. Use `=`.
+This allows imports like:
+
+```solidity
+import {ITrap} from "drosera-contracts/interfaces/ITrap.sol";
+```
 
 ---
 
@@ -203,7 +227,7 @@ ETH_RPC_URL=https://0xrpc.io/hoodi
 PRIVATE_KEY=0xYOUR_PRIVATE_KEY
 ```
 
-Load it:
+Load:
 
 ```bash
 source .env
@@ -211,9 +235,9 @@ source .env
 
 ---
 
-## 8. The Correct Trap Architecture
+## 8. Correct Drosera Architecture
 
-A **proper Drosera PoC trap** usually has three parts:
+A proper Drosera PoC typically looks like:
 
 ```
 Off-chain detector (optional)
@@ -225,20 +249,18 @@ Trap (reads data in collect())
 Responder (called by Drosera)
 ```
 
-### Important:
+Rules:
 
-* The **trap never gets called directly**
-* The **trap never stores state**
-* The **trap only reads**
-* The **responder reacts**
+* Trap is never called directly
+* Trap does not store state
+* Trap only reads and evaluates
+* Responder performs actions
 
 ---
 
-## 9. Example: Mirage Attack PoC (Correct Shape)
+## 9. Feed Contract (On-Chain Adapter)
 
-### Feed Contract (On-Chain Adapter)
-
-This is what your Node.js detector (or you) writes to.
+This contract stores observations written by an off-chain detector or operator.
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -260,13 +282,14 @@ contract MirageFeed {
         _;
     }
 
-    function pushObservation(int256 deltaBps, uint256 timestamp)
+    function pushObservation(int256 deltaBps)
         external
         onlyOwner
     {
+        uint256 ts = block.timestamp;
         lastDeltaBps = deltaBps;
-        lastTimestamp = timestamp;
-        emit ObservationPushed(deltaBps, timestamp);
+        lastTimestamp = ts;
+        emit ObservationPushed(deltaBps, ts);
     }
 
     function latestObservation() external view returns (int256, uint256) {
@@ -275,16 +298,12 @@ contract MirageFeed {
 }
 ```
 
+Note:
+Observations are written externally, but **once written, they are fully on-chain and deterministic**.
+
 ---
 
 ## 10. Trap Contract (Drosera-Correct)
-
-Key points this trap satisfies:
-
-* No constructor args
-* No state writes
-* Defensive `collect()`
-* Planner-safe `shouldRespond()`
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -297,15 +316,12 @@ interface IObservationFeed {
 }
 
 contract MirageTrap is ITrap {
-    // PoC: hardcode feed address
-    address public constant FEED =
-        0xYourDeployedMirageFeed;
+    address public constant FEED = 0xYourDeployedMirageFeed;
 
     int256 public constant THRESHOLD_BPS = 500;
-    uint256 private constant SAMPLE_SIZE = 64;
+    uint256 private constant ENCODED_LEN = 64; // 2 × 32-byte ABI words
 
     function collect() external view override returns (bytes memory) {
-        // Safety: FEED must exist
         uint256 size;
         assembly {
             size := extcodesize(FEED)
@@ -327,7 +343,7 @@ contract MirageTrap is ITrap {
         override
         returns (bool, bytes memory)
     {
-        if (data.length == 0 || data[0].length < SAMPLE_SIZE) {
+        if (data.length == 0 || data[0].length != ENCODED_LEN) {
             return (false, bytes(""));
         }
 
@@ -348,7 +364,7 @@ contract MirageTrap is ITrap {
 
 ## 11. Responder Contract
 
-The responder must match **exactly** what the trap returns.
+Must match the ABI exactly.
 
 ```solidity
 // SPDX-License-Identifier: MIT
@@ -366,12 +382,6 @@ contract MirageResponder {
 ---
 
 ## 12. drosera.toml (Critical Wiring)
-
-This file connects:
-
-* the trap artifact
-* the responder
-* operator rules
 
 ```toml
 ethereum_rpc = "https://0xrpc.io/hoodi"
@@ -396,21 +406,17 @@ whitelist = ["0xYourOperatorEOA"]
 
 ---
 
-## 13. Common Red Flags (Reviewer Kill Switches)
+## 13. Reviewer Red Flags (Avoid These)
 
-🚫 Trap has constructor arguments
-🚫 Uses `msg.sender`
-🚫 Stores state
-🚫 Calls responder inside trap
-🚫 collect() can revert
-🚫 ABI mismatch between trap, responder, and TOML
+🚫 Constructor arguments
+🚫 State writes in trap
+🚫 Using `msg.sender`
+🚫 Calling responder inside trap
+🚫 Reverting in `collect()`
+🚫 ABI mismatch
 🚫 Wrong artifact path
-🚫 Watching `address(this)` instead of a target
-🚫 Monitoring EOAs but claiming “contract anomalies”
-🚫 block_sample_size doesn’t match logic
-🚫 cooldown = 0 without edge guards
-
-Avoid these and you’re good.
+🚫 Confusing byte length with sample size
+🚫 Claiming “on-chain detection” while using off-chain logic
 
 ---
 
@@ -425,22 +431,12 @@ Avoid these and you’re good.
 
 ---
 
-## 15. GitHub Push
+## Final Mental Model
 
-```bash
-git add .
-git commit -m "Drosera PoC trap with full setup guide"
-git push -u origin master
-```
-
----
-
-## Final Mental Model (Remember This)
-
-* Traps **observe**, they don’t act
-* Responders **act**, traps don’t
-* Operators decide, not you
-* Determinism > cleverness
+* Traps **observe**
+* Responders **act**
+* Operators **decide**
+* Determinism beats cleverness
 * Simple PoCs beat complex broken ones
 
 ---
